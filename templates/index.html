@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biotech Alerter</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>Biotech Alerter</h1>
+      <input
+        id="company-search"
+        type="text"
+        placeholder="Search companies..."
+        oninput="filterCompanies(this.value)"
+        autocomplete="off"
+      >
+    </div>
+    <ul id="company-list">
+      <li data-cik="" class="active" onclick="selectCompany(this, '')">
+        <span class="co-ticker">ALL</span>
+        <span class="co-name">All Companies</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Main panel -->
+  <div id="main">
+    <div id="main-header">
+      <div id="main-header-left">
+        <h2 id="feed-title">Recent 8-K Filings</h2>
+        <span id="last-refreshed"></span>
+      </div>
+      <button id="refresh-btn" onclick="triggerRefresh()">Refresh</button>
+    </div>
+    <div id="news-feed">
+      <p class="state-msg">Loading filings...</p>
+    </div>
+  </div>
+
+  <script>
+    let currentCik = '';
+    let allCompanies = [];
+
+    // ── Company list ──────────────────────────────────────────────────────────
+
+    async function loadCompanies() {
+      try {
+        const res = await fetch('/api/companies');
+        allCompanies = await res.json();
+        renderCompanyList(allCompanies);
+      } catch (e) {
+        console.error('Failed to load companies:', e);
+      }
+    }
+
+    function renderCompanyList(companies) {
+      const ul = document.getElementById('company-list');
+      while (ul.children.length > 1) ul.removeChild(ul.lastChild);
+
+      companies.forEach(c => {
+        const li = document.createElement('li');
+        li.dataset.cik = c.cik;
+        li.dataset.ticker = c.ticker.toLowerCase();
+        li.dataset.name = c.name.toLowerCase();
+        li.onclick = () => selectCompany(li, c.cik);
+        li.innerHTML = `
+          <span class="co-ticker">${escHtml(c.ticker)}</span>
+          <span class="co-name">${escHtml(c.name)}</span>
+        `;
+        ul.appendChild(li);
+      });
+    }
+
+    function filterCompanies(query) {
+      const q = query.toLowerCase().trim();
+      document.querySelectorAll('#company-list li[data-cik]').forEach(li => {
+        const matchAll = li.dataset.cik === '';
+        const matchQuery = !q || li.dataset.ticker.includes(q) || li.dataset.name.includes(q);
+        li.style.display = (matchAll || matchQuery) ? '' : 'none';
+      });
+    }
+
+    function selectCompany(li, cik) {
+      document.querySelectorAll('#company-list li').forEach(el => el.classList.remove('active'));
+      li.classList.add('active');
+      currentCik = cik;
+
+      const title = document.getElementById('feed-title');
+      if (!cik) {
+        title.textContent = 'Recent 8-K Filings';
+      } else {
+        const company = allCompanies.find(c => c.cik === cik);
+        title.textContent = company ? `${company.ticker} — ${company.name}` : `CIK ${cik}`;
+      }
+      loadNews(cik);
+    }
+
+    // ── News feed ─────────────────────────────────────────────────────────────
+
+    async function loadNews(cik, newAccessionNos = []) {
+      const feed = document.getElementById('news-feed');
+      feed.innerHTML = '<p class="state-msg">Loading...</p>';
+
+      const url = cik ? `/api/news/${cik}` : '/api/news';
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        renderFilings(data.filings || [], newAccessionNos);
+        setLastRefreshed(data.last_refreshed);
+      } catch (e) {
+        feed.innerHTML = '<p class="state-msg">Failed to load filings.</p>';
+        console.error(e);
+      }
+    }
+
+    function renderFilings(filings, newAccessionNos = []) {
+      const feed = document.getElementById('news-feed');
+      const newSet = new Set(newAccessionNos);
+
+      if (!filings || filings.length === 0) {
+        feed.innerHTML = '<p class="state-msg">No filings found. Click Refresh to load data.</p>';
+        return;
+      }
+
+      feed.innerHTML = filings.map(f => {
+        const cikInt = parseInt(f.cik, 10) || '';
+        const bamsecUrl = cikInt ? `https://www.bamsec.com/companies/${cikInt}/` : '';
+        const title = f.title || f.form_type || '8-K';
+        const isNew = newSet.has(f.accession_no);
+        const newBadge = isNew ? '<span class="new-badge">NEW</span>' : '';
+
+        const secLink = f.primary_doc_url
+          ? `<a href="${escHtml(f.primary_doc_url)}" target="_blank" rel="noopener">SEC Filing</a>`
+          : '';
+        const bamsecLink = bamsecUrl
+          ? `<a href="${escHtml(bamsecUrl)}" target="_blank" rel="noopener">BAMSec</a>`
+          : '';
+        const links = [secLink, bamsecLink].filter(Boolean).join(' · ');
+
+        const summaryHtml = f.summary
+          ? `<div class="filing-summary">${escHtml(f.summary)}</div>`
+          : `<div class="filing-summary loading" data-accession="${escHtml(f.accession_no)}">Loading summary...</div>`;
+
+        return `
+          <div class="filing-card${isNew ? ' is-new' : ''}">
+            <div class="filing-meta">
+              <span class="filing-ticker">${escHtml(f.ticker || '')}</span>
+              <span class="filing-company">${escHtml(f.company_name || '')}</span>
+              <span class="filing-form">${escHtml(f.form_type || '8-K')}</span>
+              ${newBadge}
+              <span class="filing-date">${escHtml(f.filed_date || '')}</span>
+            </div>
+            <div class="filing-title">
+              ${f.primary_doc_url
+                ? `<a href="${escHtml(f.primary_doc_url)}" target="_blank" rel="noopener">${escHtml(title)}</a>`
+                : escHtml(title)
+              }
+            </div>
+            ${summaryHtml}
+            ${links ? `<div class="filing-links">${links}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      // Load missing summaries asynchronously
+      document.querySelectorAll('.filing-summary.loading').forEach(el => {
+        const accession = el.dataset.accession;
+        if (!accession) { el.textContent = ''; return; }
+        fetch(`/api/summary/${encodeURIComponent(accession)}`)
+          .then(r => r.json())
+          .then(data => {
+            el.classList.remove('loading');
+            el.textContent = data.summary || '';
+          })
+          .catch(() => { el.textContent = ''; });
+      });
+    }
+
+    function setLastRefreshed(isoStr) {
+      const el = document.getElementById('last-refreshed');
+      if (!isoStr) { el.textContent = ''; return; }
+      try {
+        const d = new Date(isoStr + 'Z');  // treat as UTC
+        el.textContent = 'Last refreshed: ' + d.toLocaleString([], {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit'
+        });
+      } catch (e) {
+        el.textContent = '';
+      }
+    }
+
+    // ── Manual refresh ────────────────────────────────────────────────────────
+
+    async function triggerRefresh() {
+      const btn = document.getElementById('refresh-btn');
+      btn.disabled = true;
+      btn.textContent = '⟳ Refreshing...';
+
+      try {
+        const res = await fetch('/api/refresh', { method: 'POST' });
+        const data = await res.json();
+        const newAccessionNos = data.new_accession_nos || [];
+
+        // Re-filter to current company view if needed
+        let filings = data.filings || [];
+        if (currentCik) {
+          filings = filings.filter(f => f.cik === currentCik);
+        }
+
+        renderFilings(filings, newAccessionNos);
+        setLastRefreshed(data.last_refreshed);
+
+        if (newAccessionNos.length > 0) {
+          btn.textContent = `✓ ${newAccessionNos.length} new`;
+        } else {
+          btn.textContent = '✓ Up to date';
+        }
+      } catch (e) {
+        btn.textContent = 'Error';
+        console.error('Refresh failed:', e);
+      }
+
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = 'Refresh';
+      }, 3000);
+    }
+
+    // ── Utilities ─────────────────────────────────────────────────────────────
+
+    function escHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // ── Initial load ──────────────────────────────────────────────────────────
+    loadCompanies().then(() => loadNews(''));
+  </script>
+</body>
+</html>
