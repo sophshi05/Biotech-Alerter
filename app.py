@@ -103,7 +103,9 @@ def api_refresh():
             return jsonify({"error": "Unauthorized"}), 401
 
     from fetcher import refresh_all_companies, get_recent_news, get_last_refreshed
+    from companies import resolve_companies
     conn = get_db()
+    resolve_companies(conn)  # add any new tickers to the companies table first
     count, new_accession_nos = refresh_all_companies(conn)
     filings = get_recent_news(conn)
     last_refreshed = get_last_refreshed(conn)
