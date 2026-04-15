@@ -118,6 +118,43 @@
       }
     }
 
+    // ── SEC Item code → human-readable label ─────────────────────────────────
+    const ITEM_LABELS = {
+      '1.01': 'Material Definitive Agreement',
+      '1.02': 'Termination of Material Agreement',
+      '1.03': 'Bankruptcy or Receivership',
+      '2.01': 'Acquisition or Disposition of Assets',
+      '2.02': 'Financial Results',
+      '2.03': 'New Financial Obligation',
+      '2.04': 'Acceleration of Financial Obligation',
+      '2.05': 'Exit or Disposal Activities',
+      '2.06': 'Material Impairment',
+      '3.01': 'Delisting Notice',
+      '3.02': 'Unregistered Sale of Securities',
+      '3.03': 'Modification to Security Holder Rights',
+      '4.01': 'Change in Auditor',
+      '4.02': 'Non-Reliance on Financial Statements',
+      '5.01': 'Change in Control',
+      '5.02': 'Director or Officer Change',
+      '5.03': 'Amendment to Charter or Bylaws',
+      '5.07': 'Shareholder Vote Results',
+      '5.08': 'Director Nominations',
+      '7.01': 'Regulation FD Disclosure',
+      '8.01': 'Other Events',
+      '9.01': 'Financial Statements and Exhibits',
+    };
+
+    function formatItems(itemsStr) {
+      if (!itemsStr) return '';
+      return itemsStr.split(',')
+        .map(i => ITEM_LABELS[i.trim()] || `Item ${i.trim()}`)
+        .join(' · ');
+    }
+
+    function toSlug(name) {
+      return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
+
     function renderFilings(filings, newAccessionNos = []) {
       const feed = document.getElementById('news-feed');
       const newSet = new Set(newAccessionNos);
@@ -129,10 +166,12 @@
 
       feed.innerHTML = filings.map(f => {
         const cikInt = parseInt(f.cik, 10) || '';
-        const bamsecUrl = cikInt ? `https://www.bamsec.com/companies/${cikInt}/` : '';
-        const title = f.title || f.form_type || '8-K';
+        const slug = toSlug(f.company_name);
+        const bamsecUrl = cikInt ? `https://www.bamsec.com/companies/${cikInt}/${slug}` : '';
         const isNew = newSet.has(f.accession_no);
         const newBadge = isNew ? '<span class="new-badge">NEW</span>' : '';
+
+        const description = formatItems(f.title);
 
         const secLink = f.primary_doc_url
           ? `<a href="${escHtml(f.primary_doc_url)}" target="_blank" rel="noopener">SEC Filing</a>`
@@ -141,10 +180,6 @@
           ? `<a href="${escHtml(bamsecUrl)}" target="_blank" rel="noopener">BAMSec</a>`
           : '';
         const links = [secLink, bamsecLink].filter(Boolean).join(' · ');
-
-        const summaryHtml = f.summary
-          ? `<div class="filing-summary">${escHtml(f.summary)}</div>`
-          : `<div class="filing-summary loading" data-accession="${escHtml(f.accession_no)}">Loading summary...</div>`;
 
         return `
           <div class="filing-card${isNew ? ' is-new' : ''}">
@@ -155,30 +190,11 @@
               ${newBadge}
               <span class="filing-date">${escHtml(f.filed_date || '')}</span>
             </div>
-            <div class="filing-title">
-              ${f.primary_doc_url
-                ? `<a href="${escHtml(f.primary_doc_url)}" target="_blank" rel="noopener">${escHtml(title)}</a>`
-                : escHtml(title)
-              }
-            </div>
-            ${summaryHtml}
+            ${description ? `<div class="filing-description">${escHtml(description)}</div>` : ''}
             ${links ? `<div class="filing-links">${links}</div>` : ''}
           </div>
         `;
       }).join('');
-
-      // Load missing summaries asynchronously
-      document.querySelectorAll('.filing-summary.loading').forEach(el => {
-        const accession = el.dataset.accession;
-        if (!accession) { el.textContent = ''; return; }
-        fetch(`/api/summary/${encodeURIComponent(accession)}`)
-          .then(r => r.json())
-          .then(data => {
-            el.classList.remove('loading');
-            el.textContent = data.summary || '';
-          })
-          .catch(() => { el.textContent = ''; });
-      });
     }
 
     function setLastRefreshed(isoStr) {

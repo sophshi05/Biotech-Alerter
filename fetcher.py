@@ -191,12 +191,6 @@ def refresh_all_companies(conn) -> tuple:
         except Exception as e:
             logger.error(f"Error refreshing {company['ticker']}: {e}")
 
-    # Populate summaries for recent filings missing one
-    try:
-        populate_missing_summaries(conn, session)
-    except Exception as e:
-        logger.error(f"Error populating summaries: {e}")
-
     # Record global refresh timestamp
     now = time.time()
     cur = conn.cursor()

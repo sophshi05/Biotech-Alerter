@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 from flask import Flask, g, jsonify, render_template, request
 from dotenv import load_dotenv
@@ -42,6 +43,11 @@ def index():
     return render_template("index.html")
 
 
+def _make_slug(name: str) -> str:
+    """Convert a company name to a BAMSec URL slug."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
 @app.route("/api/companies")
 def api_companies():
     from companies import get_all_companies
@@ -50,11 +56,12 @@ def api_companies():
     result = []
     for r in rows:
         cik_int = int(r["cik"])
+        slug = _make_slug(r["name"])
         result.append({
             "ticker": r["ticker"],
             "cik": r["cik"],
             "name": r["name"],
-            "bamsec_url": f"https://www.bamsec.com/companies/{cik_int}/",
+            "bamsec_url": f"https://www.bamsec.com/companies/{cik_int}/{slug}",
         })
     return jsonify(result)
 
@@ -85,40 +92,6 @@ def api_news_by_cik(cik: str):
     last_refreshed = get_last_refreshed(conn)
     return jsonify({"filings": filings, "last_refreshed": last_refreshed})
 
-
-@app.route("/api/summary/<accession_no>")
-def api_summary(accession_no: str):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT summary, primary_doc_url FROM filings WHERE accession_no = %s",
-        (accession_no,),
-    )
-    row = cur.fetchone()
-    cur.close()
-
-    if not row:
-        return jsonify({"summary": ""}), 404
-
-    if row["summary"]:
-        return jsonify({"summary": row["summary"]})
-
-    from fetcher import fetch_filing_summary
-    import requests as req
-    session = req.Session()
-    summary = fetch_filing_summary(row["primary_doc_url"], session)
-    session.close()
-
-    if summary:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE filings SET summary = %s WHERE accession_no = %s",
-            (summary, accession_no),
-        )
-        conn.commit()
-        cur.close()
-
-    return jsonify({"summary": summary})
 
 
 @app.route("/api/refresh", methods=["POST"])

@@ -209,16 +209,11 @@ body {
   text-decoration: underline;
 }
 
-.filing-summary {
+.filing-description {
   font-size: 12px;
   color: #374151;
   margin-bottom: 6px;
   line-height: 1.5;
-}
-
-.filing-summary.loading {
-  color: #9ca3af;
-  font-style: italic;
 }
 
 .filing-links {
