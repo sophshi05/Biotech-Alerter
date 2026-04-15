@@ -241,6 +241,8 @@
       } catch (e) {
         btn.textContent = 'Error';
         console.error('Refresh failed:', e);
+      } finally {
+        await loadCompanies();
       }
 
       setTimeout(() => {

@@ -228,27 +228,28 @@ def resolve_companies(conn) -> None:
         return
 
     now = time.time()
-    resolved = 0
-    cur = conn.cursor()
+    rows = []
     for ticker in BIOTECH_TICKERS:
         entry = cik_map.get(ticker.upper())
         if not entry:
             logger.warning(f"Ticker {ticker} not found in EDGAR — skipping.")
             continue
-        cur.execute(
-            """INSERT INTO companies (ticker, cik, name, last_updated)
-               VALUES (%s, %s, %s, %s)
-               ON CONFLICT (ticker) DO UPDATE SET
-                   cik=EXCLUDED.cik,
-                   name=EXCLUDED.name,
-                   last_updated=EXCLUDED.last_updated""",
-            (ticker, entry["cik"], entry["name"], now),
-        )
-        resolved += 1
+        rows.append((ticker, entry["cik"], entry["name"], now))
 
+    cur = conn.cursor()
+    psycopg2.extras.execute_values(
+        cur,
+        """INSERT INTO companies (ticker, cik, name, last_updated)
+           VALUES %s
+           ON CONFLICT (ticker) DO UPDATE SET
+               cik=EXCLUDED.cik,
+               name=EXCLUDED.name,
+               last_updated=EXCLUDED.last_updated""",
+        rows,
+    )
     conn.commit()
     cur.close()
-    logger.info(f"Resolved {resolved}/{len(BIOTECH_TICKERS)} biotech companies.")
+    logger.info(f"Resolved {len(rows)}/{len(BIOTECH_TICKERS)} biotech companies.")
 
 
 def get_all_companies(conn) -> list:

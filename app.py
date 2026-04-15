@@ -50,8 +50,9 @@ def _make_slug(name: str) -> str:
 
 @app.route("/api/companies")
 def api_companies():
-    from companies import get_all_companies
+    from companies import get_all_companies, resolve_companies
     conn = get_db()
+    resolve_companies(conn)  # ensures all tickers are in DB before returning list
     rows = get_all_companies(conn)
     result = []
     for r in rows:
