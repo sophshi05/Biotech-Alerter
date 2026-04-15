@@ -144,7 +144,7 @@ def api_refresh():
 
 
 # ---------------------------------------------------------------------------
-# Startup
+# Startup — runs on cold start (module import) AND locally
 # ---------------------------------------------------------------------------
 
 def _startup():
@@ -157,6 +157,12 @@ def _startup():
         conn.close()
 
 
-if __name__ == "__main__":
+# Run on every cold start (Vercel imports this file as a module).
+# init_db uses CREATE TABLE IF NOT EXISTS so it's safe to call repeatedly.
+try:
     _startup()
+except Exception as _e:
+    logger.error(f"Startup error: {_e}")
+
+if __name__ == "__main__":
     app.run(debug=False, threaded=True, port=8080)
