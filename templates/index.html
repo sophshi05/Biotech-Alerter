@@ -229,6 +229,7 @@
           filings = filings.filter(f => f.cik === currentCik);
         }
 
+        await loadCompanies();
         renderFilings(filings, newAccessionNos);
         setLastRefreshed(data.last_refreshed);
 
