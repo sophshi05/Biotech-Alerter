@@ -207,14 +207,16 @@ def fetch_cik_map() -> dict:
 
 def resolve_companies(conn) -> None:
     cur = conn.cursor()
-    cur.execute("SELECT MIN(last_updated) AS oldest FROM companies")
-    row = cur.fetchone()
+    cur.execute("SELECT ticker, last_updated FROM companies")
+    existing = {row["ticker"]: row["last_updated"] for row in cur.fetchall()}
     cur.close()
 
-    oldest = row["oldest"] if row else None
-    is_stale = oldest is None or (time.time() - oldest) > COMPANY_TTL
-
-    if not is_stale:
+    now = time.time()
+    needs_update = any(
+        t not in existing or (now - existing[t]) > COMPANY_TTL
+        for t in BIOTECH_TICKERS
+    )
+    if not needs_update:
         logger.info("Company list cache is fresh, skipping EDGAR fetch.")
         return
 
