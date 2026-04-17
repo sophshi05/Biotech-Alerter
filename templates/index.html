@@ -160,15 +160,26 @@
       'common stock offering','equity offering','stock offering',
       'priced its offering','share offering','registered direct',
       'initial public offering',' ipo ',
+      'securities purchase agreement','subscription agreement',
+      'pre-funded warrant','prefunded warrant',
+      'convertible note','convertible notes',
     ];
+
+    // Administrative item codes that are never clinical news even if summary
+    // mentions a pipeline phase (e.g. stock option grants to officers)
+    const ADMIN_ITEMS = new Set(['5.02','5.03','5.07','5.08','3.03','4.01','4.02','2.03','2.04','2.05','2.06']);
 
     function categorizeFiling(f) {
       const text  = ((f.summary || '') + ' ' + (f.title || '')).toLowerCase();
       const items = (f.title || '').split(',').map(s => s.trim()).filter(Boolean);
+      const substantive = items.filter(i => i !== '9.01');
+
+      // If every substantive item is administrative, skip clinical check entirely
+      const isAdmin = substantive.length > 0 && substantive.every(i => ADMIN_ITEMS.has(i));
 
       // 7.01 (Reg FD) in biotech is nearly always clinical data or FDA news
-      if ((CLINICAL_KW.some(kw => text.includes(kw)) && !INITIATION_KW.some(kw => text.includes(kw)))
-          || items.includes('7.01')) return 'clinical';
+      if (!isAdmin && ((CLINICAL_KW.some(kw => text.includes(kw)) && !INITIATION_KW.some(kw => text.includes(kw)))
+          || items.includes('7.01'))) return 'clinical';
 
       // 8-K/A amendments are corrections to prior filings, not new deals
       if (f.form_type !== '8-K/A' && (MA_KW.some(kw => text.includes(kw)) || items.includes('2.01'))) return 'ma';
@@ -241,7 +252,7 @@
     }
 
     const SECTIONS = [
-      { id: 'offering',  title: 'Offerings & Capital Raises' },
+      { id: 'offering',  title: 'Capital Raises & Equity Financings' },
       { id: 'ma',        title: 'M&A & Asset Transactions'   },
       { id: 'clinical',  title: 'Clinical Data & FDA Events' },
     ];
