@@ -107,12 +107,6 @@ body {
   margin-bottom: 16px;
 }
 
-#main-header-right {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 #main-header-left {
   display: flex;
   flex-direction: column;
@@ -262,43 +256,71 @@ body {
   border-left: 3px solid #16a34a;
 }
 
-/* ── Importance ── */
-.filing-card.priority-high {
-  border-left: 3px solid #f59e0b;
-  background: #fffbeb;
+/* ── Categorized sections ── */
+#sections-container {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  margin-bottom: 20px;
+  align-items: flex-start;
 }
 
-.priority-badge {
-  background: #f59e0b;
+.feed-section {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #e2e4e8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.feed-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
   color: #fff;
-  font-size: 10px;
+}
+
+.feed-section[data-section="offering"] .feed-section-header { background: #16a34a; }
+.feed-section[data-section="ma"]       .feed-section-header { background: #7c3aed; }
+.feed-section[data-section="clinical"] .feed-section-header { background: #d97706; }
+
+.feed-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.feed-section-count {
+  background: rgba(255,255,255,0.25);
+  font-size: 11px;
   font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 3px;
-  letter-spacing: 0.05em;
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.feed-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: #e2e4e8;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.feed-section-body .filing-card {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+#other-filings-label {
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-}
-
-.filing-card.priority-low {
-  opacity: 0.45;
-}
-
-#news-feed.hide-low .filing-card.priority-low {
-  display: none;
-}
-
-#hide-routine-btn {
-  padding: 5px 12px;
-  background: #fff;
-  color: #374151;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-#hide-routine-btn:hover {
-  background: #f3f4f6;
+  letter-spacing: 0.07em;
+  color: #9ca3af;
+  margin-bottom: 10px;
 }
 
 /* ── States ── */

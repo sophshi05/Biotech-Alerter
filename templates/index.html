@@ -35,11 +35,10 @@
         <h2 id="feed-title">Recent 8-K Filings</h2>
         <span id="last-refreshed"></span>
       </div>
-      <div id="main-header-right">
-        <button id="hide-routine-btn" onclick="toggleRoutine()">Hide routine</button>
-        <button id="refresh-btn" onclick="triggerRefresh()">Refresh</button>
-      </div>
+      <button id="refresh-btn" onclick="triggerRefresh()">Refresh</button>
     </div>
+    <div id="sections-container"></div>
+    <div id="other-filings-label">All Other Filings</div>
     <div id="news-feed">
       <p class="state-msg">Loading filings...</p>
     </div>
@@ -112,11 +111,13 @@
     async function loadNews(cik, newAccessionNos = []) {
       const feed = document.getElementById('news-feed');
       feed.innerHTML = '<p class="state-msg">Loading...</p>';
+      document.getElementById('sections-container').innerHTML = '';
 
       const url = cik ? `/api/news/${cik}` : '/api/news';
       try {
         const res = await fetch(url);
         const data = await res.json();
+        renderSections(data.filings || [], newAccessionNos);
         renderFilings(data.filings || [], newAccessionNos);
         setLastRefreshed(data.last_refreshed);
       } catch (e) {
@@ -125,95 +126,52 @@
       }
     }
 
-    // ── Importance classification ─────────────────────────────────────────────
+    // ── Filing categorization ─────────────────────────────────────────────────
 
-    const ITEM_IMPORTANCE = {
-      // High signal
-      '1.01': 'high',   // Entry into material agreement (partnerships, licensing)
-      '2.02': 'high',   // Results of operations / earnings
-      '7.01': 'high',   // Regulation FD disclosure (often clinical data)
-      '8.01': 'high',   // Other events — confirmed by keyword check below
-      // Medium signal
-      '1.02': 'medium', // Termination of material agreement
-      '2.01': 'medium', // Completion of acquisition
-      '5.02': 'medium', // Director/officer changes (upgraded to high for C-suite departure)
-      // Low signal
-      '3.03': 'low',
-      '4.01': 'low',
-      '4.02': 'low',
-      '5.03': 'low',
-      '5.07': 'low',
-      '5.08': 'low',
-      '9.01': 'low',
-    };
-    const RANK = { high: 3, medium: 2, normal: 1, low: 0 };
-
-    // 8.01 keywords that confirm a genuinely important event
-    const KEY_EVENT_KW = [
-      // Clinical / trial data
-      'phase 1','phase 2','phase 3','phase i','phase ii','phase iii',
-      'topline','top-line','top line','data readout',
-      'primary endpoint','statistically significant','interim analysis',
-      'overall survival','progression-free','response rate',
-      // FDA
-      'fda','pdufa','nda ','bla ','approval','approved',
-      'complete response letter','crl',
-      'advisory committee','adcom','breakthrough therapy',
-      'fast track','priority review',
-      // Financing / offering
-      'offering','underwritten','public offering','private placement',
-      'at-the-market','equity financing','follow-on',
-      // Executive departure
-      'resign','step down','stepping down','departure',
+    const CLINICAL_KW = [
+      'topline','top-line','top line','data readout','readout',
+      'primary endpoint','met the primary','statistically significant',
+      'overall survival','progression-free','response rate','objective response',
+      'interim analysis','efficacy data','trial results','study results',
+      'phase 1 result','phase 2 result','phase 3 result',
+      'phase i result','phase ii result','phase iii result',
+      'positive data','negative data','failed to meet',
+      'fda approv','approved the','complete response letter',' crl ',
+      'pdufa','advisory committee','adcom',
+      'breakthrough therapy','fast track designation','priority review',
+      'accelerated approval',
     ];
-    // 8.01 patterns that mark a routine / administrative event (override KEY_EVENT_KW)
-    const ROUTINE_KW = [
-      'conference call','investor presentation','webcast','investor day',
-      'will present at','scheduled to present','participation in',
+    const INITIATION_KW = [
+      'first patient enrolled','first patient dosed','first-in-human',
+      'trial initiation','study initiation',
+      'initiated enrollment','begins enrollment','began enrollment',
+      'open enrollment','ind filed','ind cleared',
+      'initiates phase','initiating phase','initiated phase',
     ];
-    // C-suite titles that make a 5.02 departure high-importance
-    const KEY_EXEC_TITLES = [
-      'ceo','chief executive','chief scientific','cso',
-      'chief medical','cmo','chief financial','cfo',
-      'president and chief',
+    const MA_KW = [
+      'merger','acquisition','acqui','acquired by','agreed to acquire',
+      'tender offer','going private','business combination','buyout','takeover',
+    ];
+    const OFFERING_KW = [
+      'public offering','follow-on offering','underwritten offering',
+      'private placement','at-the-market',' atm offering',
+      'common stock offering','equity offering','stock offering',
+      'priced its offering','share offering','registered direct',
+      'initial public offering',' ipo ',
     ];
 
-    function classifyFiling(f) {
-      const items = (f.title || '').split(',').map(s => s.trim()).filter(Boolean);
+    function categorizeFiling(f) {
       const text  = ((f.summary || '') + ' ' + (f.title || '')).toLowerCase();
+      const items = (f.title || '').split(',').map(s => s.trim()).filter(Boolean);
 
-      // Max importance across all items in this filing
-      let imp = 'normal';
-      for (const item of items) {
-        const v = ITEM_IMPORTANCE[item] || 'normal';
-        if (RANK[v] > RANK[imp]) imp = v;
-      }
+      if (CLINICAL_KW.some(kw => text.includes(kw)) &&
+          !INITIATION_KW.some(kw => text.includes(kw))) return 'clinical';
 
-      // 8.01: only keep 'high' if keywords confirm a real event (not routine)
-      const has801 = items.includes('8.01');
-      const otherHighItems = items.filter(i => i !== '8.01' && ITEM_IMPORTANCE[i] === 'high');
-      if (has801 && otherHighItems.length === 0 && imp === 'high') {
-        const isKey     = KEY_EVENT_KW.some(kw => text.includes(kw));
-        const isRoutine = ROUTINE_KW.some(kw => text.includes(kw));
-        imp = (isKey && !isRoutine) ? 'high' : 'normal';
-      }
+      if (MA_KW.some(kw => text.includes(kw)) || items.includes('2.01')) return 'ma';
 
-      // 5.02: upgrade to 'high' for C-suite departures
-      if (items.includes('5.02') && RANK[imp] < RANK['high']) {
-        const hasCTitle   = KEY_EXEC_TITLES.some(t => text.includes(t));
-        const isDeparture = ['resign','step down','stepping down','depart','terminat'].some(w => text.includes(w));
-        if (hasCTitle && isDeparture) imp = 'high';
-      }
+      if (OFFERING_KW.some(kw => text.includes(kw))) return 'offering';
 
-      return imp;
-    }
-
-    let hideRoutine = false;
-    function toggleRoutine() {
-      hideRoutine = !hideRoutine;
-      document.getElementById('news-feed').classList.toggle('hide-low', hideRoutine);
-      document.getElementById('hide-routine-btn').textContent =
-        hideRoutine ? 'Show all' : 'Hide routine';
+      return null;
     }
 
     // ── SEC Item code → human-readable label ─────────────────────────────────
@@ -249,55 +207,70 @@
         .join(' · ');
     }
 
-    function toSlug(name) {
-      return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    function renderFilingCard(f, newSet) {
+      const cikInt = parseInt(f.cik, 10) || '';
+      const accessionDigits = f.accession_no ? f.accession_no.replace(/-/g, '').replace(/^0+/, '') : '';
+      const bamsecUrl = (cikInt && accessionDigits)
+        ? `https://www.bamsec.com/filing/${accessionDigits}?cik=${cikInt}` : '';
+      const isNew = newSet.has(f.accession_no);
+      const newBadge = isNew ? '<span class="new-badge">NEW</span>' : '';
+      const description = formatItems(f.title);
+      const secLink = f.primary_doc_url
+        ? `<a href="${escHtml(f.primary_doc_url)}" target="_blank" rel="noopener">SEC Filing</a>` : '';
+      const bamsecLink = bamsecUrl
+        ? `<a href="${escHtml(bamsecUrl)}" target="_blank" rel="noopener">BAMSec</a>` : '';
+      const links = [secLink, bamsecLink].filter(Boolean).join(' · ');
+      return `
+        <div class="filing-card${isNew ? ' is-new' : ''}">
+          <div class="filing-meta">
+            <span class="filing-ticker">${escHtml(f.ticker || '')}</span>
+            <span class="filing-company">${escHtml(f.company_name || '')}</span>
+            <span class="filing-form">${escHtml(f.form_type || '8-K')}</span>
+            ${newBadge}
+            <span class="filing-date">${escHtml(f.filed_date || '')}</span>
+          </div>
+          ${description ? `<div class="filing-description">${escHtml(description)}</div>` : ''}
+          ${f.summary ? `<div class="filing-summary">${escHtml(f.summary)}</div>` : ''}
+          ${links ? `<div class="filing-links">${links}</div>` : ''}
+        </div>`;
+    }
+
+    const SECTIONS = [
+      { id: 'offering',  title: 'Offerings & Capital Raises' },
+      { id: 'ma',        title: 'M&A Activity'               },
+      { id: 'clinical',  title: 'Clinical Data & FDA Events' },
+    ];
+
+    function renderSections(filings, newAccessionNos = []) {
+      const container = document.getElementById('sections-container');
+      const newSet = new Set(newAccessionNos);
+      container.innerHTML = SECTIONS.map(sec => {
+        const matched = filings.filter(f => categorizeFiling(f) === sec.id);
+        if (!matched.length) return '';
+        return `
+          <div class="feed-section" data-section="${sec.id}">
+            <div class="feed-section-header">
+              <span class="feed-section-title">${sec.title}</span>
+              <span class="feed-section-count">${matched.length}</span>
+            </div>
+            <div class="feed-section-body">
+              ${matched.map(f => renderFilingCard(f, newSet)).join('')}
+            </div>
+          </div>`;
+      }).join('');
     }
 
     function renderFilings(filings, newAccessionNos = []) {
       const feed = document.getElementById('news-feed');
       const newSet = new Set(newAccessionNos);
-
       if (!filings || filings.length === 0) {
         feed.innerHTML = '<p class="state-msg">No filings found. Click Refresh to load data.</p>';
         return;
       }
-
-      feed.innerHTML = filings.map(f => {
-        const cikInt = parseInt(f.cik, 10) || '';
-        const accessionDigits = f.accession_no ? f.accession_no.replace(/-/g, '').replace(/^0+/, '') : '';
-        const bamsecUrl = (cikInt && accessionDigits) ? `https://www.bamsec.com/filing/${accessionDigits}?cik=${cikInt}` : '';
-        const isNew = newSet.has(f.accession_no);
-        const newBadge = isNew ? '<span class="new-badge">NEW</span>' : '';
-
-        const priority = classifyFiling(f);
-        const priorityBadge = priority === 'high' ? '<span class="priority-badge">KEY EVENT</span>' : '';
-        const priorityClass = (priority === 'high' || priority === 'low') ? ` priority-${priority}` : '';
-
-        const description = formatItems(f.title);
-
-        const secLink = f.primary_doc_url
-          ? `<a href="${escHtml(f.primary_doc_url)}" target="_blank" rel="noopener">SEC Filing</a>`
-          : '';
-        const bamsecLink = bamsecUrl
-          ? `<a href="${escHtml(bamsecUrl)}" target="_blank" rel="noopener">BAMSec</a>`
-          : '';
-        const links = [secLink, bamsecLink].filter(Boolean).join(' · ');
-
-        return `
-          <div class="filing-card${isNew ? ' is-new' : ''}${priorityClass}">
-            <div class="filing-meta">
-              <span class="filing-ticker">${escHtml(f.ticker || '')}</span>
-              <span class="filing-company">${escHtml(f.company_name || '')}</span>
-              <span class="filing-form">${escHtml(f.form_type || '8-K')}</span>
-              ${newBadge}${priorityBadge}
-              <span class="filing-date">${escHtml(f.filed_date || '')}</span>
-            </div>
-            ${description ? `<div class="filing-description">${escHtml(description)}</div>` : ''}
-            ${f.summary ? `<div class="filing-summary">${escHtml(f.summary)}</div>` : ''}
-            ${links ? `<div class="filing-links">${links}</div>` : ''}
-          </div>
-        `;
-      }).join('');
+      const regular = filings.filter(f => categorizeFiling(f) === null);
+      feed.innerHTML = regular.length
+        ? regular.map(f => renderFilingCard(f, newSet)).join('')
+        : '<p class="state-msg">All recent filings are shown in the sections above.</p>';
     }
 
     function setLastRefreshed(isoStr) {
@@ -333,6 +306,7 @@
         }
 
         await loadCompanies();
+        renderSections(filings, newAccessionNos);
         renderFilings(filings, newAccessionNos);
         setLastRefreshed(data.last_refreshed);
 
