@@ -264,8 +264,8 @@
 
       feed.innerHTML = filings.map(f => {
         const cikInt = parseInt(f.cik, 10) || '';
-        const slug = toSlug(f.company_name);
-        const bamsecUrl = cikInt ? `https://www.bamsec.com/companies/${cikInt}/${slug}` : '';
+        const accessionDigits = f.accession_no ? f.accession_no.replace(/-/g, '').replace(/^0+/, '') : '';
+        const bamsecUrl = (cikInt && accessionDigits) ? `https://www.bamsec.com/filing/${accessionDigits}?cik=${cikInt}` : '';
         const isNew = newSet.has(f.accession_no);
         const newBadge = isNew ? '<span class="new-badge">NEW</span>' : '';
 
