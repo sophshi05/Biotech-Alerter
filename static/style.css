@@ -107,6 +107,12 @@ body {
   margin-bottom: 16px;
 }
 
+#main-header-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 #main-header-left {
   display: flex;
   flex-direction: column;
@@ -232,6 +238,14 @@ body {
   text-decoration: underline;
 }
 
+.filing-summary {
+  font-size: 12px;
+  color: #555;
+  margin-top: 3px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
 /* ── NEW badge ── */
 .new-badge {
   background: #16a34a;
@@ -246,6 +260,45 @@ body {
 
 .filing-card.is-new {
   border-left: 3px solid #16a34a;
+}
+
+/* ── Importance ── */
+.filing-card.priority-high {
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+}
+
+.priority-badge {
+  background: #f59e0b;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.filing-card.priority-low {
+  opacity: 0.45;
+}
+
+#news-feed.hide-low .filing-card.priority-low {
+  display: none;
+}
+
+#hide-routine-btn {
+  padding: 5px 12px;
+  background: #fff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#hide-routine-btn:hover {
+  background: #f3f4f6;
 }
 
 /* ── States ── */

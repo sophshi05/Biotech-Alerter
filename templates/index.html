@@ -35,7 +35,10 @@
         <h2 id="feed-title">Recent 8-K Filings</h2>
         <span id="last-refreshed"></span>
       </div>
-      <button id="refresh-btn" onclick="triggerRefresh()">Refresh</button>
+      <div id="main-header-right">
+        <button id="hide-routine-btn" onclick="toggleRoutine()">Hide routine</button>
+        <button id="refresh-btn" onclick="triggerRefresh()">Refresh</button>
+      </div>
     </div>
     <div id="news-feed">
       <p class="state-msg">Loading filings...</p>
@@ -122,6 +125,40 @@
       }
     }
 
+    // ── Importance classification ─────────────────────────────────────────────
+
+    const LOW_ITEMS  = new Set(['5.02','5.03','5.07','5.08','3.03','4.01','4.02']);
+    const HIGH_ITEMS = new Set(['1.01','2.01','7.01']);
+    const HIGH_KW = [
+      'fda','pdufa','nda ','bla ','approval','approved','breakthrough',
+      'fast track','adcom','advisory committee','complete response',
+      'phase 1','phase 2','phase 3','phase i','phase ii','phase iii',
+      'clinical trial','topline','top-line','top line',
+      'primary endpoint','statistically significant','data readout',
+      'interim analysis','overall survival','progression-free',
+      'merger','acquisition','acquire','tender offer',
+      'offering','underwritten','public offering','follow-on',
+      'license agreement','collaboration agreement','licensing agreement',
+    ];
+
+    function classifyFiling(f) {
+      const items = (f.title || '').split(',').map(s => s.trim()).filter(Boolean);
+      const text  = ((f.summary || '') + ' ' + (f.title || '')).toLowerCase();
+      if (HIGH_KW.some(kw => text.includes(kw)) || items.some(i => HIGH_ITEMS.has(i)))
+        return 'high';
+      if (items.length > 0 && items.filter(i => i !== '9.01').every(i => LOW_ITEMS.has(i)))
+        return 'low';
+      return 'normal';
+    }
+
+    let hideRoutine = false;
+    function toggleRoutine() {
+      hideRoutine = !hideRoutine;
+      document.getElementById('news-feed').classList.toggle('hide-low', hideRoutine);
+      document.getElementById('hide-routine-btn').textContent =
+        hideRoutine ? 'Show all' : 'Hide routine';
+    }
+
     // ── SEC Item code → human-readable label ─────────────────────────────────
     const ITEM_LABELS = {
       '1.01': 'Material Definitive Agreement',
@@ -175,6 +212,10 @@
         const isNew = newSet.has(f.accession_no);
         const newBadge = isNew ? '<span class="new-badge">NEW</span>' : '';
 
+        const priority = classifyFiling(f);
+        const priorityBadge = priority === 'high' ? '<span class="priority-badge">KEY EVENT</span>' : '';
+        const priorityClass = priority !== 'normal' ? ` priority-${priority}` : '';
+
         const description = formatItems(f.title);
 
         const secLink = f.primary_doc_url
@@ -186,15 +227,16 @@
         const links = [secLink, bamsecLink].filter(Boolean).join(' · ');
 
         return `
-          <div class="filing-card${isNew ? ' is-new' : ''}">
+          <div class="filing-card${isNew ? ' is-new' : ''}${priorityClass}">
             <div class="filing-meta">
               <span class="filing-ticker">${escHtml(f.ticker || '')}</span>
               <span class="filing-company">${escHtml(f.company_name || '')}</span>
               <span class="filing-form">${escHtml(f.form_type || '8-K')}</span>
-              ${newBadge}
+              ${newBadge}${priorityBadge}
               <span class="filing-date">${escHtml(f.filed_date || '')}</span>
             </div>
             ${description ? `<div class="filing-description">${escHtml(description)}</div>` : ''}
+            ${f.summary ? `<div class="filing-summary">${escHtml(f.summary)}</div>` : ''}
             ${links ? `<div class="filing-links">${links}</div>` : ''}
           </div>
         `;

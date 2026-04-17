@@ -204,6 +204,32 @@ def refresh_all_companies(conn) -> tuple:
     conn.commit()
     cur.close()
 
+    # Fetch summaries for newly inserted filings (cap at 25 to avoid timeout)
+    if all_new:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT accession_no, primary_doc_url FROM filings WHERE accession_no = ANY(%s)",
+            (list(all_new),),
+        )
+        new_rows = cur.fetchall()
+        cur.close()
+        to_summarize = [
+            r for r in new_rows
+            if r["primary_doc_url"] and "browse-edgar" not in r["primary_doc_url"]
+        ]
+        cur = conn.cursor()
+        for row in to_summarize[:25]:
+            summary = fetch_filing_summary(row["primary_doc_url"], session)
+            if summary:
+                cur.execute(
+                    "UPDATE filings SET summary = %s WHERE accession_no = %s",
+                    (summary, row["accession_no"]),
+                )
+        if to_summarize:
+            conn.commit()
+        cur.close()
+        logger.info(f"Fetched summaries for up to {min(len(to_summarize), 25)} new filings.")
+
     session.close()
     logger.info(f"Refresh complete: {count}/{len(companies)} companies, {len(all_new)} new filings.")
     return count, all_new
