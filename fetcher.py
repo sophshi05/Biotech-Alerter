@@ -324,11 +324,12 @@ def get_last_refreshed(conn) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Filing summaries (free, no API key — first paragraph extraction)
+# Filing summaries (free, no API key — scored sentence extraction)
 # ---------------------------------------------------------------------------
 
 _SKIP_PATTERNS = [
     _re.compile(p, _re.IGNORECASE) for p in [
+        # SEC header boilerplate
         r"^united states",
         r"^securities and exchange commission",
         r"^washington",
@@ -342,6 +343,51 @@ _SKIP_PATTERNS = [
         r"check the appropriate box",
         r"^\d{4}$",
         r"^[a-z\s,\.]+, [a-z]{2} \d{5}",
+        # Additional header / administrative boilerplate
+        r"indicate by check mark",
+        r"emerging growth company",
+        r"^incorporated in",
+        r"telephone.*\d{3}",
+        r"^\(\d{3}\)\s*\d{3}",
+        r"^trading symbol",
+        r"securities registered",
+        r"section 12\([bg]\)",
+        # Filing-level boilerplate
+        r"the (following|foregoing) information.{0,40}(furnished|filed)",
+        r"this (current report|information).{0,40}(deemed|not deemed|furnished)",
+        r"incorporated by reference",
+        r"press release dated",
+        r"^exhibit \d",
+        r"^for immediate release",
+        r"^contact:",
+        r"^investor (relations|contact)",
+        r"^media contact",
+        r"^about [a-z]",          # "About Acme Bio" company description section
+        r"safe harbor",
+        r"forward.looking statement",
+        r"pursuant to general instruction",
+        r"^signature",
+        r"^dated\b",
+        r"^\*+\s*\*+",
+        r"^-+\s*-+",
+    ]
+]
+
+# Signals that a sentence contains the actual news
+_SIGNAL_PATTERNS = [
+    _re.compile(p, _re.IGNORECASE) for p in [
+        r"\bphase [123i]{1,3}\b",
+        r"\b(FDA|NDA|BLA|IND|PDUFA|ANDA|EMA|CDER|PRAC)\b",
+        r"\b(trial|endpoint|efficacy|patients?|clinical study|cohort)\b",
+        r"\b(acqui|merg|licens|partner|collaborat|tender offer)\b",
+        r"\b(offering|underwr|placement|priced)\b",
+        r"\$[\d,]+",
+        r"\b\d+(?:\.\d+)?\s*(?:million|billion)\b",
+        r"\b(approved?|granted?|cleared?|designated?|authorized?)\b",
+        r"\b(announced?|entered?|agreed?|completed?|executed?|received?|reported?)\b",
+        r"\b(today|quarter|fiscal year|Q[1-4]|[12][0-9]{3})\b",
+        r"\b(positive|negative|statistically significant|primary endpoint)\b",
+        r"\b(drug|compound|candidate|molecule|antibody|therapy|treatment)\b",
     ]
 ]
 
@@ -365,14 +411,31 @@ def _fetch_filing_text(url: str, session: requests.Session) -> str:
 
 def _extract_summary(text: str) -> str:
     text = _re.sub(r"\s+", " ", text).strip()
-    for sentence in _re.split(r"(?<=[.!?])\s+", text):
+    sentences = _re.split(r"(?<=[.!?])\s+", text)
+
+    best = ""
+    best_score = -1
+    first_valid = ""
+
+    for sentence in sentences[:120]:
         s = sentence.strip()
-        if len(s) < 50:
+        if len(s) < 60:
             continue
         if any(p.search(s) for p in _SKIP_PATTERNS):
             continue
-        return s[:220] + ("..." if len(s) > 220 else "")
-    return ""
+
+        score = sum(1 for p in _SIGNAL_PATTERNS if p.search(s))
+
+        if not first_valid:
+            first_valid = s
+        if score > best_score:
+            best_score = score
+            best = s
+            if score >= 3:  # confident enough — stop scanning
+                break
+
+    result = best or first_valid
+    return result[:300] + ("..." if len(result) > 300 else "")
 
 
 def fetch_filing_summary(url: str, session: requests.Session) -> str:
