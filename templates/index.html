@@ -74,14 +74,18 @@
         `;
         ul.appendChild(li);
       });
+
+      const q = document.getElementById('company-search').value;
+      if (q) filterCompanies(q);
     }
 
     function filterCompanies(query) {
-      const q = query.toLowerCase().trim();
-      document.querySelectorAll('#company-list li[data-cik]').forEach(li => {
-        const matchAll = li.dataset.cik === '';
-        const matchQuery = !q || li.dataset.ticker.includes(q) || li.dataset.name.includes(q);
-        li.style.display = (matchAll || matchQuery) ? '' : 'none';
+      const q = (query || '').toLowerCase().trim();
+      document.querySelectorAll('#company-list li').forEach(li => {
+        if (!li.dataset.cik) { li.style.display = ''; return; }
+        const ticker = li.dataset.ticker || '';
+        const name = li.dataset.name || '';
+        li.style.display = (!q || ticker.includes(q) || name.includes(q)) ? '' : 'none';
       });
     }
 
