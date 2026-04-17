@@ -118,7 +118,16 @@ BIOTECH_TICKERS = [
     # Large pharma
     "ABBV", "AZN", "BMY", "GSK", "JNJ", "LLY", "MRK", "NVO", "NVS",
     "PFE", "RHHBY", "SNY", "TAK",
+    # Recent IPOs (added manually; auto-detection handles future ones)
+    "KLRA",
 ]
+
+# Name fragments used to auto-detect new biotech IPOs from company_tickers.json.
+# Intentionally tight to avoid pulling in medical devices, hospitals, etc.
+BIOTECH_NAME_KW = (
+    "therapeutics", "biosciences", "bioscience",
+    "biopharma", "biopharmaceutical", "genomics",
+)
 
 COMPANY_TTL = 7 * 24 * 3600  # 7 days
 USER_AGENT = "BiotechAlerter daniel4duan@gmail.com"
@@ -229,12 +238,27 @@ def resolve_companies(conn) -> None:
 
     now = time.time()
     rows = []
+    tracked = set()
+
     for ticker in BIOTECH_TICKERS:
         entry = cik_map.get(ticker.upper())
         if not entry:
             logger.warning(f"Ticker {ticker} not found in EDGAR — skipping.")
             continue
         rows.append((ticker, entry["cik"], entry["name"], now))
+        tracked.add(ticker.upper())
+
+    # Auto-detect new biotech IPOs: scan every public company name in company_tickers.json
+    # for tight biotech keywords. Runs at zero extra API cost (cik_map already downloaded).
+    auto_added = 0
+    for ticker, entry in cik_map.items():
+        if ticker in tracked:
+            continue
+        name_lower = entry["name"].lower()
+        if any(kw in name_lower for kw in BIOTECH_NAME_KW):
+            rows.append((ticker, entry["cik"], entry["name"], now))
+            tracked.add(ticker)
+            auto_added += 1
 
     cur = conn.cursor()
     psycopg2.extras.execute_values(
@@ -249,7 +273,10 @@ def resolve_companies(conn) -> None:
     )
     conn.commit()
     cur.close()
-    logger.info(f"Resolved {len(rows)}/{len(BIOTECH_TICKERS)} biotech companies.")
+    logger.info(
+        f"Resolved {len(rows)} companies "
+        f"({len(BIOTECH_TICKERS)} hardcoded + {auto_added} auto-detected)."
+    )
 
 
 def get_all_companies(conn) -> list:
