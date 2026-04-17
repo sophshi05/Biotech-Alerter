@@ -133,8 +133,7 @@
       'primary endpoint','met the primary','statistically significant',
       'overall survival','progression-free','response rate','objective response',
       'interim analysis','efficacy data','trial results','study results',
-      'phase 1 result','phase 2 result','phase 3 result',
-      'phase i result','phase ii result','phase iii result',
+      'phase 1','phase 2','phase 3','phase i','phase ii','phase iii',
       'positive data','negative data','failed to meet',
       'fda approv','approved the','complete response letter',' crl ',
       'pdufa','advisory committee','adcom',
@@ -164,12 +163,14 @@
       const text  = ((f.summary || '') + ' ' + (f.title || '')).toLowerCase();
       const items = (f.title || '').split(',').map(s => s.trim()).filter(Boolean);
 
-      if (CLINICAL_KW.some(kw => text.includes(kw)) &&
-          !INITIATION_KW.some(kw => text.includes(kw))) return 'clinical';
+      // 7.01 (Reg FD) in biotech is nearly always clinical data or FDA news
+      if ((CLINICAL_KW.some(kw => text.includes(kw)) && !INITIATION_KW.some(kw => text.includes(kw)))
+          || items.includes('7.01')) return 'clinical';
 
       if (MA_KW.some(kw => text.includes(kw)) || items.includes('2.01')) return 'ma';
 
-      if (OFFERING_KW.some(kw => text.includes(kw))) return 'offering';
+      // 3.02 (Unregistered Sale of Securities) = private placements / offerings
+      if (OFFERING_KW.some(kw => text.includes(kw)) || items.includes('3.02')) return 'offering';
 
       return null;
     }
@@ -244,17 +245,25 @@
     function renderSections(filings, newAccessionNos = []) {
       const container = document.getElementById('sections-container');
       const newSet = new Set(newAccessionNos);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 7);
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+
       container.innerHTML = SECTIONS.map(sec => {
-        const matched = filings.filter(f => categorizeFiling(f) === sec.id);
-        if (!matched.length) return '';
+        const matched = filings.filter(f =>
+          categorizeFiling(f) === sec.id && f.filed_date >= cutoffStr
+        );
+        const bodyContent = matched.length
+          ? matched.map(f => renderFilingCard(f, newSet)).join('')
+          : '<p class="section-empty">No activity in the last 7 days</p>';
         return `
           <div class="feed-section" data-section="${sec.id}">
             <div class="feed-section-header">
               <span class="feed-section-title">${sec.title}</span>
-              <span class="feed-section-count">${matched.length}</span>
+              ${matched.length ? `<span class="feed-section-count">${matched.length}</span>` : ''}
             </div>
             <div class="feed-section-body">
-              ${matched.map(f => renderFilingCard(f, newSet)).join('')}
+              ${bodyContent}
             </div>
           </div>`;
       }).join('');
