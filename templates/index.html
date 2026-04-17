@@ -127,28 +127,85 @@
 
     // ── Importance classification ─────────────────────────────────────────────
 
-    const LOW_ITEMS  = new Set(['5.02','5.03','5.07','5.08','3.03','4.01','4.02']);
-    const HIGH_ITEMS = new Set(['1.01','2.01','7.01']);
-    const HIGH_KW = [
-      'fda','pdufa','nda ','bla ','approval','approved','breakthrough',
-      'fast track','adcom','advisory committee','complete response',
+    const ITEM_IMPORTANCE = {
+      // High signal
+      '1.01': 'high',   // Entry into material agreement (partnerships, licensing)
+      '2.02': 'high',   // Results of operations / earnings
+      '7.01': 'high',   // Regulation FD disclosure (often clinical data)
+      '8.01': 'high',   // Other events — confirmed by keyword check below
+      // Medium signal
+      '1.02': 'medium', // Termination of material agreement
+      '2.01': 'medium', // Completion of acquisition
+      '5.02': 'medium', // Director/officer changes (upgraded to high for C-suite departure)
+      // Low signal
+      '3.03': 'low',
+      '4.01': 'low',
+      '4.02': 'low',
+      '5.03': 'low',
+      '5.07': 'low',
+      '5.08': 'low',
+      '9.01': 'low',
+    };
+    const RANK = { high: 3, medium: 2, normal: 1, low: 0 };
+
+    // 8.01 keywords that confirm a genuinely important event
+    const KEY_EVENT_KW = [
+      // Clinical / trial data
       'phase 1','phase 2','phase 3','phase i','phase ii','phase iii',
-      'clinical trial','topline','top-line','top line',
-      'primary endpoint','statistically significant','data readout',
-      'interim analysis','overall survival','progression-free',
-      'merger','acquisition','acquire','tender offer',
-      'offering','underwritten','public offering','follow-on',
-      'license agreement','collaboration agreement','licensing agreement',
+      'topline','top-line','top line','data readout',
+      'primary endpoint','statistically significant','interim analysis',
+      'overall survival','progression-free','response rate',
+      // FDA
+      'fda','pdufa','nda ','bla ','approval','approved',
+      'complete response letter','crl',
+      'advisory committee','adcom','breakthrough therapy',
+      'fast track','priority review',
+      // Financing / offering
+      'offering','underwritten','public offering','private placement',
+      'at-the-market','equity financing','follow-on',
+      // Executive departure
+      'resign','step down','stepping down','departure',
+    ];
+    // 8.01 patterns that mark a routine / administrative event (override KEY_EVENT_KW)
+    const ROUTINE_KW = [
+      'conference call','investor presentation','webcast','investor day',
+      'will present at','scheduled to present','participation in',
+    ];
+    // C-suite titles that make a 5.02 departure high-importance
+    const KEY_EXEC_TITLES = [
+      'ceo','chief executive','chief scientific','cso',
+      'chief medical','cmo','chief financial','cfo',
+      'president and chief',
     ];
 
     function classifyFiling(f) {
       const items = (f.title || '').split(',').map(s => s.trim()).filter(Boolean);
       const text  = ((f.summary || '') + ' ' + (f.title || '')).toLowerCase();
-      if (HIGH_KW.some(kw => text.includes(kw)) || items.some(i => HIGH_ITEMS.has(i)))
-        return 'high';
-      if (items.length > 0 && items.filter(i => i !== '9.01').every(i => LOW_ITEMS.has(i)))
-        return 'low';
-      return 'normal';
+
+      // Max importance across all items in this filing
+      let imp = 'normal';
+      for (const item of items) {
+        const v = ITEM_IMPORTANCE[item] || 'normal';
+        if (RANK[v] > RANK[imp]) imp = v;
+      }
+
+      // 8.01: only keep 'high' if keywords confirm a real event (not routine)
+      const has801 = items.includes('8.01');
+      const otherHighItems = items.filter(i => i !== '8.01' && ITEM_IMPORTANCE[i] === 'high');
+      if (has801 && otherHighItems.length === 0 && imp === 'high') {
+        const isKey     = KEY_EVENT_KW.some(kw => text.includes(kw));
+        const isRoutine = ROUTINE_KW.some(kw => text.includes(kw));
+        imp = (isKey && !isRoutine) ? 'high' : 'normal';
+      }
+
+      // 5.02: upgrade to 'high' for C-suite departures
+      if (items.includes('5.02') && RANK[imp] < RANK['high']) {
+        const hasCTitle   = KEY_EXEC_TITLES.some(t => text.includes(t));
+        const isDeparture = ['resign','step down','stepping down','depart','terminat'].some(w => text.includes(w));
+        if (hasCTitle && isDeparture) imp = 'high';
+      }
+
+      return imp;
     }
 
     let hideRoutine = false;
@@ -214,7 +271,7 @@
 
         const priority = classifyFiling(f);
         const priorityBadge = priority === 'high' ? '<span class="priority-badge">KEY EVENT</span>' : '';
-        const priorityClass = priority !== 'normal' ? ` priority-${priority}` : '';
+        const priorityClass = (priority === 'high' || priority === 'low') ? ` priority-${priority}` : '';
 
         const description = formatItems(f.title);
 
