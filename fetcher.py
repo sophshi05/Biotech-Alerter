@@ -1,7 +1,9 @@
+import threading
 import time
 import logging
 import re as _re
-from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -9,10 +11,27 @@ logger = logging.getLogger(__name__)
 
 EDGAR_BASE = "https://data.sec.gov/submissions"
 USER_AGENT = "BiotechAlerter daniel4duan@gmail.com"
-REQUEST_DELAY = 0.15
-FILING_TTL = 7200      # 2 hours
+REQUEST_DELAY = 0.12   # ~8 req/sec; SEC allows max 10
+FILING_TTL = 7200      # 2 hours (active companies)
 MAX_RETRIES = 3
 LOOKBACK_DAYS = 30
+MAX_WORKERS = 8        # parallel EDGAR fetches
+
+
+class _RateLimiter:
+    """Thread-safe token bucket: ensures requests don't exceed 1/min_interval per second."""
+    def __init__(self, min_interval: float):
+        self._lock = threading.Lock()
+        self._interval = min_interval
+        self._last = 0.0
+
+    def wait(self):
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last
+            if elapsed < self._interval:
+                time.sleep(self._interval - elapsed)
+            self._last = time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -39,14 +58,33 @@ def _make_request(url: str, session: requests.Session) -> dict:
 
 
 def _is_cache_stale(conn, cik: str) -> bool:
-    key = f"filings_last_refresh:{cik}"
     cur = conn.cursor()
-    cur.execute("SELECT last_updated FROM cache_meta WHERE key = %s", (key,))
+    cur.execute("SELECT last_updated FROM cache_meta WHERE key = %s",
+                (f"filings_last_refresh:{cik}",))
     row = cur.fetchone()
-    cur.close()
     if not row:
+        cur.close()
         return True
-    return (time.time() - row["last_updated"]) > FILING_TTL
+    last_refresh = row["last_updated"]
+
+    # Dynamic TTL: check active companies often, inactive ones rarely.
+    # This keeps typical refreshes fast once the DB is populated.
+    cur.execute("SELECT MAX(filed_date) FROM filings WHERE cik = %s", (cik,))
+    date_row = cur.fetchone()
+    cur.close()
+
+    if date_row and date_row["max"]:
+        days_since = (date.today() - date.fromisoformat(date_row["max"])).days
+        if days_since <= 30:
+            ttl = FILING_TTL          # 2h  — actively filing
+        elif days_since <= 90:
+            ttl = FILING_TTL * 3      # 6h  — semi-active
+        else:
+            ttl = FILING_TTL * 12     # 24h — dormant
+    else:
+        ttl = FILING_TTL              # 2h  — never fetched yet
+
+    return (time.time() - last_refresh) > ttl
 
 
 def _build_filing_url(cik: str, accession_no: str, primary_document: str) -> str:
@@ -115,52 +153,61 @@ def fetch_company_filings(
     company_name: str,
     session: requests.Session,
     force: bool = False,
+    rate_limiter: _RateLimiter = None,
+    db_lock: threading.Lock = None,
 ) -> tuple:
     """Returns (filings: list[dict], new_accession_nos: set[str])."""
-    if not force and not _is_cache_stale(conn, cik):
-        return _get_cached_filings(conn, cik), set()
+    _lock = db_lock or threading.Lock()
+
+    with _lock:
+        if not force and not _is_cache_stale(conn, cik):
+            return _get_cached_filings(conn, cik), set()
+
+    if rate_limiter:
+        rate_limiter.wait()
 
     url = f"{EDGAR_BASE}/CIK{cik}.json"
     try:
         data = _make_request(url, session)
     except Exception as e:
         logger.error(f"Failed to fetch filings for {ticker} (CIK {cik}): {e}")
-        return _get_cached_filings(conn, cik), set()
+        with _lock:
+            return _get_cached_filings(conn, cik), set()
     finally:
-        time.sleep(REQUEST_DELAY)
+        if not rate_limiter:
+            time.sleep(REQUEST_DELAY)
 
     filings = _parse_filings(data, cik, ticker, company_name)
     now = time.time()
     new_accession_nos = set()
 
-    cur = conn.cursor()
-    for f in filings:
+    with _lock:
+        cur = conn.cursor()
+        for f in filings:
+            cur.execute(
+                """INSERT INTO filings
+                   (accession_no, cik, ticker, company_name, form_type, filed_date,
+                    title, primary_doc_url, first_seen_at, last_updated)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (accession_no) DO NOTHING""",
+                (
+                    f["accession_no"], f["cik"], f["ticker"], f["company_name"],
+                    f["form_type"], f["filed_date"], f["title"],
+                    f["primary_doc_url"], now, f["last_updated"],
+                ),
+            )
+            if cur.rowcount == 1:
+                new_accession_nos.add(f["accession_no"])
+
         cur.execute(
-            """INSERT INTO filings
-               (accession_no, cik, ticker, company_name, form_type, filed_date,
-                title, primary_doc_url, first_seen_at, last_updated)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (accession_no) DO NOTHING""",
-            (
-                f["accession_no"], f["cik"], f["ticker"], f["company_name"],
-                f["form_type"], f["filed_date"], f["title"],
-                f["primary_doc_url"], now, f["last_updated"],
-            ),
+            """INSERT INTO cache_meta (key, value, last_updated)
+               VALUES (%s, %s, %s)
+               ON CONFLICT (key) DO UPDATE SET
+                   value=EXCLUDED.value, last_updated=EXCLUDED.last_updated""",
+            (f"filings_last_refresh:{cik}", datetime.utcnow().isoformat(), now),
         )
-        if cur.rowcount == 1:
-            new_accession_nos.add(f["accession_no"])
-
-    # Update cache_meta TTL for this company
-    cur.execute(
-        """INSERT INTO cache_meta (key, value, last_updated)
-           VALUES (%s, %s, %s)
-           ON CONFLICT (key) DO UPDATE SET
-               value=EXCLUDED.value, last_updated=EXCLUDED.last_updated""",
-        (f"filings_last_refresh:{cik}", datetime.utcnow().isoformat(), now),
-    )
-
-    conn.commit()
-    cur.close()
+        conn.commit()
+        cur.close()
 
     logger.info(
         f"Fetched {len(filings)} 8-K filings for {ticker} "
@@ -174,22 +221,61 @@ def refresh_all_companies(conn) -> tuple:
     from companies import get_all_companies
     companies = get_all_companies(conn)
     session = requests.Session()
-    count = 0
+    rate_limiter = _RateLimiter(REQUEST_DELAY)
+    db_lock = threading.Lock()
     all_new = set()
+    count = 0
 
-    for company in companies:
-        try:
-            _, new = fetch_company_filings(
-                conn,
-                company["cik"],
-                company["ticker"],
-                company["name"],
-                session,
-            )
-            all_new |= new
-            count += 1
-        except Exception as e:
-            logger.error(f"Error refreshing {company['ticker']}: {e}")
+    def _refresh_one(company):
+        return fetch_company_filings(
+            conn,
+            company["cik"],
+            company["ticker"],
+            company["name"],
+            session,
+            rate_limiter=rate_limiter,
+            db_lock=db_lock,
+        )
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(_refresh_one, c): c for c in companies}
+        for future in as_completed(futures):
+            company = futures[future]
+            try:
+                _, new = future.result()
+                all_new |= new
+                count += 1
+            except Exception as e:
+                logger.error(f"Error refreshing {company['ticker']}: {e}")
+
+    # Fetch summaries for newly inserted filings (HTTP outside lock, DB write inside)
+    if all_new:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT accession_no, primary_doc_url FROM filings WHERE accession_no = ANY(%s)",
+            (list(all_new),),
+        )
+        new_rows = cur.fetchall()
+        cur.close()
+        to_summarize = [
+            r for r in new_rows
+            if r["primary_doc_url"] and "browse-edgar" not in r["primary_doc_url"]
+        ]
+        summaries = {}
+        for row in to_summarize[:25]:
+            summary = fetch_filing_summary(row["primary_doc_url"], session)
+            if summary:
+                summaries[row["accession_no"]] = summary
+        if summaries:
+            cur = conn.cursor()
+            for accession_no, summary in summaries.items():
+                cur.execute(
+                    "UPDATE filings SET summary = %s WHERE accession_no = %s",
+                    (summary, accession_no),
+                )
+            conn.commit()
+            cur.close()
+        logger.info(f"Fetched summaries for up to {min(len(to_summarize), 25)} new filings.")
 
     # Record global refresh timestamp
     now = time.time()
@@ -203,32 +289,6 @@ def refresh_all_companies(conn) -> tuple:
     )
     conn.commit()
     cur.close()
-
-    # Fetch summaries for newly inserted filings (cap at 25 to avoid timeout)
-    if all_new:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT accession_no, primary_doc_url FROM filings WHERE accession_no = ANY(%s)",
-            (list(all_new),),
-        )
-        new_rows = cur.fetchall()
-        cur.close()
-        to_summarize = [
-            r for r in new_rows
-            if r["primary_doc_url"] and "browse-edgar" not in r["primary_doc_url"]
-        ]
-        cur = conn.cursor()
-        for row in to_summarize[:25]:
-            summary = fetch_filing_summary(row["primary_doc_url"], session)
-            if summary:
-                cur.execute(
-                    "UPDATE filings SET summary = %s WHERE accession_no = %s",
-                    (summary, row["accession_no"]),
-                )
-        if to_summarize:
-            conn.commit()
-        cur.close()
-        logger.info(f"Fetched summaries for up to {min(len(to_summarize), 25)} new filings.")
 
     session.close()
     logger.info(f"Refresh complete: {count}/{len(companies)} companies, {len(all_new)} new filings.")
